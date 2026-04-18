@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LearnMap AI — Learner Assistant</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <!-- D3.js -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+
+  <!-- Marked.js (Markdown rendering) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- App CSS -->
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- ===== LEFT SIDEBAR ===== -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <i class="fas fa-brain"></i>
+          <span>LearnMap AI</span>
+        </div>
+        <p class="tagline">Your Intelligent Learner Assistant</p>
+      </div>
+
+      <!-- Upload -->
+      <div class="upload-section">
+        <div class="upload-area" id="upload-area">
+          <i class="fas fa-cloud-upload-alt upload-icon"></i>
+          <p class="upload-text">Drop files here or <strong>click to upload</strong></p>
+          <span class="upload-hint">PDF, DOCX, TXT — up to 50 MB</span>
+        </div>
+        <input type="file" id="file-input" hidden accept=".pdf,.docx,.doc,.txt" />
+      </div>
+
+      <!-- Document list -->
+      <div class="documents-section">
+        <h3><i class="fas fa-folder-open"></i> Your Documents</h3>
+        <div id="documents-list" class="documents-list">
+          <p class="empty-hint">No documents yet — upload one above!</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="main-content">
+      <!-- Toolbar -->
+      <header class="toolbar">
+        <div class="toolbar-left">
+          <h2 id="current-doc-title">Select a document to begin</h2>
+        </div>
+        <div class="toolbar-right">
+          <button id="btn-zoom-fit" class="toolbar-btn" title="Fit to view" disabled>
+            <i class="fas fa-expand"></i> Fit View
+          </button>
+          <button id="btn-expand-all" class="toolbar-btn" title="Expand all nodes" disabled>
+            <i class="fas fa-sitemap"></i> Expand All
+          </button>
+          <button id="btn-collapse-all" class="toolbar-btn" title="Collapse nodes" disabled>
+            <i class="fas fa-compress-alt"></i> Collapse
+          </button>
+          <button id="btn-download" class="toolbar-btn btn-primary" title="Download mind map as PNG" disabled>
+            <i class="fas fa-download"></i> Download PNG
+          </button>
+        </div>
+      </header>
+
+      <!-- Mind-map canvas -->
+      <div id="mindmap-container" class="hidden">
+        <div id="mindmap-wrapper"></div>
+      </div>
+
+      <!-- Welcome screen -->
+      <div id="welcome-screen" class="welcome-screen">
+        <div class="welcome-content">
+          <i class="fas fa-brain welcome-icon"></i>
+          <h1>Welcome to LearnMap AI</h1>
+          <p>Upload a PDF, Word, or text document and instantly generate an<br />interactive mind map to accelerate your learning.</p>
+          <div class="features-grid">
+            <div class="feature-card">
+              <i class="fas fa-file-upload"></i>
+              <h4>Upload Documents</h4>
+              <p>PDF, DOCX, or TXT</p>
+            </div>
+            <div class="feature-card">
+              <i class="fas fa-project-diagram"></i>
+              <h4>Interactive Mind Maps</h4>
+              <p>Click nodes to explore</p>
+            </div>
+            <div class="feature-card">
+              <i class="fas fa-search-plus"></i>
+              <h4>Deep Dive</h4>
+              <p>AI-powered explanations</p>
+            </div>
+            <div class="feature-card">
+              <i class="fas fa-image"></i>
+              <h4>Export PNG</h4>
+              <p>Download your mind map</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== RIGHT DETAIL PANEL ===== -->
+    <aside class="detail-panel" id="detail-panel">
+      <div class="panel-header">
+        <h3 id="detail-title">Topic Details</h3>
+        <button id="btn-close-panel" class="btn-icon" title="Close panel">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="panel-body">
+        <div class="panel-summary" id="detail-summary"></div>
+        <button id="btn-explore-more" class="btn-explore">
+          <i class="fas fa-magic"></i> Explore More with AI
+        </button>
+        <div id="detail-extended" class="detail-extended"></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loading-overlay" class="loading-overlay hidden">
+    <div class="spinner-wrapper">
+      <div class="spinner"></div>
+      <p id="loading-message">Processing your document…</p>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- App JS -->
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
