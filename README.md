@@ -57,19 +57,30 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
               │  • Text extraction  │
               │  • Mind map gen     │
               │  • Node details     │
-              └──────┬──────┬───────┘
-                     │      │
-        AAD Token    │      │  AAD Token
-                     ▼      ▼
-     ┌───────────────┐    ┌──────────────────┐
-     │ Azure OpenAI  │    │ Azure Cosmos DB  │
-     │ (GPT-4.1)     │    │ (NoSQL/Serverless│
-     │               │    │  AAD-only auth)  │
-     │ • Mind map    │    │                  │
-     │   generation  │    │ • Document store │
-     │ • Deep dive   │    │ • Mind map JSON  │
-     │   explanations│    │ • Text content   │
-     └───────────────┘    └──────────────────┘
+              └──┬──────┬──────┬────┘
+                 │      │      │
+    AAD Token    │      │      │  Key / AAD
+                 ▼      │      ▼
+  ┌───────────────┐    │    ┌──────────────────────┐
+  │ Azure OpenAI  │    │    │ Azure AI Foundry     │
+  │ (GPT-4.1)     │    │    │ (Claude Sonnet)      │
+  │               │    │    │                      │
+  │ • Mind map    │    │    │ • Serverless MaaS    │
+  │   generation  │    │    │ • Mind map gen       │
+  │ • Deep dive   │    │    │ • Deep dive          │
+  └───────────────┘    │    └──────────────────────┘
+                       │
+              AAD Token│
+                       ▼
+              ┌──────────────────┐
+              │ Azure Cosmos DB  │
+              │ (NoSQL/Serverless│
+              │  AAD-only auth)  │
+              │                  │
+              │ • Document store │
+              │ • Mind map JSON  │
+              │ • Text content   │
+              └──────────────────┘
 ```
 
 ---
@@ -86,6 +97,9 @@ All resources live under a single resource group: **`Notebook-LM-Like-on-Azure`*
 | 4 | **Azure Cosmos DB** | `learnmap-cosmosdb` | NoSQL / Serverless | West US 2 |
 | 5 | **Cosmos DB Database** | `learner_assistant` | SQL Database | — |
 | 6 | **Cosmos DB Container** | `documents` | Partition Key: `/id` | — |
+| 7 | **AI Foundry Hub** | `learnmap-ai-hub-eastus2` | ML Workspace / Hub | East US 2 |
+| 8 | **AI Foundry Project** | `learnmap-claude-project` | ML Workspace / Project | East US 2 |
+| 9 | **Claude Deployment** | _(deploy via portal)_ | Serverless MaaS | East US 2 |
 
 ---
 
@@ -165,6 +179,47 @@ az cosmosdb sql role assignment create \
   --principal-id $USER_ID \
   --role-definition-id "00000000-0000-0000-0000-000000000002"
 ```
+
+### 7. Azure AI Foundry — Claude Deployment
+
+Azure AI Foundry provides access to Anthropic's Claude models via **Models-as-a-Service (MaaS)**. Claude is available in **East US 2** and **Sweden Central**.
+
+**Step 1 — Hub & Project were created via CLI:**
+```bash
+# Hub (already provisioned)
+az rest --method PUT \
+  --url "https://management.azure.com/subscriptions/<sub-id>/resourceGroups/Notebook-LM-Like-on-Azure/providers/Microsoft.MachineLearningServices/workspaces/learnmap-ai-hub-eastus2?api-version=2024-04-01" \
+  --body '{"location":"eastus2","kind":"Hub","properties":{},"identity":{"type":"SystemAssigned"}}'
+
+# Project (already provisioned)
+az rest --method PUT \
+  --url "https://management.azure.com/subscriptions/<sub-id>/resourceGroups/Notebook-LM-Like-on-Azure/providers/Microsoft.MachineLearningServices/workspaces/learnmap-claude-project?api-version=2024-04-01" \
+  --body '{"location":"eastus2","kind":"Project","properties":{"hubResourceId":"<hub-resource-id>"},"identity":{"type":"SystemAssigned"}}'
+```
+
+**Step 2 — Deploy Claude via Azure AI Foundry Portal:**
+
+> Claude marketplace subscriptions require terms acceptance via the portal.
+
+1. Go to [Azure AI Foundry](https://ai.azure.com) → select **learnmap-claude-project**
+2. Navigate to **Model catalog** → search **"Claude"**
+3. Select a Claude model (e.g., Claude Sonnet 4.5, Claude Haiku 4.5)
+4. Click **"Use this model"** → review pricing → **Deploy**
+5. After deployment, note the **Target URI** and **Key** from the endpoint page
+6. Add to `.env`:
+   ```
+   AZURE_CLAUDE_ENDPOINT=https://<your-endpoint>.eastus2.models.ai.azure.com
+   AZURE_CLAUDE_KEY=<your-key>
+   DEFAULT_MODEL=claude
+   ```
+
+**Available Claude models on Azure AI Foundry:**
+| Model | Type | Best For |
+|-------|------|----------|
+| Claude Sonnet 4.5 | Preview | Balanced speed & quality |
+| Claude Sonnet 4.6 | Preview | Latest capabilities |
+| Claude Haiku 4.5 | Preview | Fast & cost-effective |
+| Claude Opus 4.1–4.7 | Preview | Maximum quality |
 
 ---
 

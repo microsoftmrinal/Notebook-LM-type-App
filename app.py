@@ -8,6 +8,8 @@ from werkzeug.utils import secure_filename
 from openai import AzureOpenAI
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from azure.identity import DefaultAzureCredential
+from azure.ai.inference import ChatCompletionsClient
+from azure.ai.inference.models import SystemMessage, UserMessage
 from PyPDF2 import PdfReader
 from docx import Document
 from dotenv import load_dotenv
@@ -22,12 +24,12 @@ ALLOWED_EXTENSIONS = {"pdf", "docx", "doc", "txt"}
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 # ---------------------------------------------------------------------------
-# Shared AAD credential (used for both OpenAI and Cosmos DB)
+# Shared AAD credential (used for OpenAI, Cosmos DB, and AI Foundry)
 # ---------------------------------------------------------------------------
 credential = DefaultAzureCredential()
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI  — uses AAD token instead of API key
+# Azure OpenAI  — uses AAD token (GPT-4.1)
 # ---------------------------------------------------------------------------
 aoai_client = AzureOpenAI(
     azure_ad_token_provider=lambda: credential.get_token(
@@ -36,7 +38,24 @@ aoai_client = AzureOpenAI(
     api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
 )
-DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+GPT_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-41")
+
+# ---------------------------------------------------------------------------
+# Azure AI Foundry — Claude via serverless MaaS endpoint
+# ---------------------------------------------------------------------------
+CLAUDE_ENDPOINT = os.getenv("AZURE_CLAUDE_ENDPOINT", "")
+CLAUDE_KEY = os.getenv("AZURE_CLAUDE_KEY", "")  # Serverless endpoints use key auth
+
+claude_client = None
+if CLAUDE_ENDPOINT:
+    claude_client = ChatCompletionsClient(
+        endpoint=CLAUDE_ENDPOINT,
+        credential=credential if not CLAUDE_KEY else None,
+        key=CLAUDE_KEY if CLAUDE_KEY else None,
+    )
+
+# Active model: "gpt" or "claude"
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt")
 
 # ---------------------------------------------------------------------------
 # Azure Cosmos DB  –  singleton client, database & container
@@ -100,10 +119,54 @@ def chunk_text(text: str, max_chars: int = 12_000) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI – mind-map generation
+# AI Helpers — unified interface for GPT and Claude
 # ---------------------------------------------------------------------------
 
-def generate_mindmap(text: str, filename: str) -> dict:
+def _call_llm(system_prompt: str, user_prompt: str, model: str = "gpt",
+              max_tokens: int = 4096, json_mode: bool = False) -> str:
+    """Route to the right LLM backend and return the text response."""
+
+    if model == "claude" and claude_client:
+        response = claude_client.complete(
+            messages=[
+                SystemMessage(content=system_prompt),
+                UserMessage(content=user_prompt),
+            ],
+            temperature=0.3,
+            max_tokens=max_tokens,
+        )
+        text = response.choices[0].message.content
+        # Claude doesn't have json_mode — strip markdown fences if present
+        if json_mode:
+            text = text.strip()
+            if text.startswith("```"):
+                text = "\n".join(text.split("\n")[1:])
+            if text.endswith("```"):
+                text = text.rsplit("```", 1)[0]
+            text = text.strip()
+        return text
+
+    # Default: Azure OpenAI (GPT)
+    kwargs = dict(
+        model=GPT_DEPLOYMENT,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.3,
+        max_tokens=max_tokens,
+    )
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    response = aoai_client.chat.completions.create(**kwargs)
+    return response.choices[0].message.content
+
+
+# ---------------------------------------------------------------------------
+# Mind-map generation
+# ---------------------------------------------------------------------------
+
+def generate_mindmap(text: str, filename: str, model: str = "gpt") -> dict:
     chunks = chunk_text(text)
     combined = "\n\n".join(chunks[:5])[:60_000]
 
@@ -124,28 +187,19 @@ def generate_mindmap(text: str, filename: str) -> dict:
         f"Document content:\n{combined}"
     )
 
-    response = aoai_client.chat.completions.create(
-        model=DEPLOYMENT_NAME,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an expert educator and knowledge organizer. "
-                    "Create detailed, well-structured mind maps that help "
-                    "learners understand complex topics. Always return valid JSON only."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.3,
-        max_tokens=4096,
-        response_format={"type": "json_object"},
+    system_prompt = (
+        "You are an expert educator and knowledge organizer. "
+        "Create detailed, well-structured mind maps that help "
+        "learners understand complex topics. Always return valid JSON only."
     )
 
-    return json.loads(response.choices[0].message.content)
+    raw = _call_llm(system_prompt, prompt, model=model,
+                    max_tokens=4096, json_mode=True)
+    return json.loads(raw)
 
 
-def get_node_details(node_name: str, node_summary: str, doc_text: str) -> str:
+def get_node_details(node_name: str, node_summary: str, doc_text: str,
+                     model: str = "gpt") -> str:
     excerpt = doc_text[:30_000]
 
     prompt = (
@@ -161,24 +215,13 @@ def get_node_details(node_name: str, node_summary: str, doc_text: str) -> str:
         f"Document content:\n{excerpt}"
     )
 
-    response = aoai_client.chat.completions.create(
-        model=DEPLOYMENT_NAME,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an expert educator. Provide detailed, clear "
-                    "explanations that help learners deeply understand concepts. "
-                    "Use Markdown formatting."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.3,
-        max_tokens=2048,
+    system_prompt = (
+        "You are an expert educator. Provide detailed, clear "
+        "explanations that help learners deeply understand concepts. "
+        "Use Markdown formatting."
     )
 
-    return response.choices[0].message.content
+    return _call_llm(system_prompt, prompt, model=model, max_tokens=2048)
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +254,8 @@ def upload_file():
         if not text.strip():
             return jsonify({"error": "Could not extract text from the document."}), 400
 
-        mindmap = generate_mindmap(text, filename)
+        selected_model = request.form.get("model", DEFAULT_MODEL)
+        mindmap = generate_mindmap(text, filename, model=selected_model)
 
         doc_id = str(uuid.uuid4())
         document = {
@@ -251,6 +295,16 @@ def list_documents():
     return jsonify(items)
 
 
+@app.route("/models", methods=["GET"])
+def get_models():
+    models = [
+        {"id": "gpt", "name": "GPT-4.1 (Azure OpenAI)", "available": True},
+        {"id": "claude", "name": "Claude Sonnet (Azure AI Foundry)",
+         "available": claude_client is not None},
+    ]
+    return jsonify({"models": models, "default": DEFAULT_MODEL})
+
+
 @app.route("/mindmap/<doc_id>", methods=["GET"])
 def get_mindmap(doc_id):
     try:
@@ -272,6 +326,7 @@ def node_details():
     node_name = data.get("nodeName")
     node_summary = data.get("nodeSummary", "")
     doc_id = data.get("documentId")
+    selected_model = data.get("model", DEFAULT_MODEL)
 
     if not node_name or not doc_id:
         return jsonify({"error": "Missing required fields"}), 400
@@ -279,7 +334,8 @@ def node_details():
     try:
         item = container.read_item(item=doc_id, partition_key=doc_id)
         details = get_node_details(
-            node_name, node_summary, item.get("textContent", "")
+            node_name, node_summary, item.get("textContent", ""),
+            model=selected_model,
         )
         return jsonify({"details": details})
     except exceptions.CosmosResourceNotFoundError:

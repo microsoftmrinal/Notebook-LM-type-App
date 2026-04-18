@@ -36,6 +36,15 @@
 
       <!-- Upload -->
       <div class="upload-section">
+        <!-- Model selector -->
+        <div class="model-selector">
+          <label for="model-select"><i class="fas fa-robot"></i> AI Model</label>
+          <select id="model-select">
+            <option value="gpt" selected>GPT-4.1 (Azure OpenAI)</option>
+            <option value="claude">Claude Sonnet (Azure AI Foundry)</option>
+          </select>
+        </div>
+
         <div class="upload-area" id="upload-area">
           <i class="fas fa-cloud-upload-alt upload-icon"></i>
           <p class="upload-text">Drop files here or <strong>click to upload</strong></p>

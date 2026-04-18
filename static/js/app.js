@@ -30,6 +30,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupUpload();
   setupToolbar();
   loadDocuments();
+  loadModels();
   createTooltip();
 });
 
@@ -69,6 +70,7 @@ async function handleFile(file) {
 
   const form = new FormData();
   form.append("file", file);
+  form.append("model", getSelectedModel());
 
   try {
     const res = await fetch("/upload", { method: "POST", body: form });
@@ -82,6 +84,35 @@ async function handleFile(file) {
     showToast(err.message, "error");
   } finally {
     hideLoading();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Model selector
+// ---------------------------------------------------------------------------
+function getSelectedModel() {
+  return document.getElementById("model-select").value;
+}
+
+async function loadModels() {
+  try {
+    const res = await fetch("/models");
+    const data = await res.json();
+    const select = document.getElementById("model-select");
+    select.innerHTML = "";
+    data.models.forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.name;
+      if (!m.available) {
+        opt.disabled = true;
+        opt.textContent += " (not configured)";
+      }
+      if (m.id === data.default) opt.selected = true;
+      select.appendChild(opt);
+    });
+  } catch {
+    /* keep defaults */
   }
 }
 
@@ -512,6 +543,7 @@ async function exploreMore() {
         nodeName: state.selectedNode.data.name,
         nodeSummary: state.selectedNode.data.summary || "",
         documentId: state.currentDocId,
+        model: getSelectedModel(),
       }),
     });
     const data = await res.json();
