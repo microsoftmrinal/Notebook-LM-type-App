@@ -87,6 +87,49 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
               └──────────────────┘
 ```
 
+### How the Application Runs
+
+Flask is the **single web server** running on `127.0.0.1:5000`. It serves both the frontend (HTML/CSS/JS) and the backend API — no separate Node.js or JS server is needed.
+
+```
+Browser visits http://127.0.0.1:5000/
+        │
+        ▼
+   Flask (app.py) — port 5000
+        │
+        ├── Route "/"
+        │   └── render_template("index.html")
+        │       → Flask looks in templates/ folder
+        │       → Returns the HTML page to the browser
+        │
+        ├── Browser parses HTML, finds <link> and <script> tags:
+        │   │   <link href="/static/css/style.css">
+        │   │   <script src="/static/js/app.js">
+        │   │
+        │   └── Flask auto-serves files under static/ at /static/...
+        │       (built-in Flask convention — no route code needed)
+        │
+        └── app.js runs IN THE BROWSER, calls Flask API via fetch():
+            │
+            ├── GET  /models        → returns available AI models
+            ├── GET  /documents     → returns saved document list
+            ├── POST /upload        → processes file → Azure OpenAI → Cosmos DB
+            ├── GET  /mindmap/<id>  → returns mind map JSON
+            ├── POST /node-details  → calls Azure OpenAI for deep-dive
+            └── DELETE /document/<id> → removes from Cosmos DB
+```
+
+**File relationships:**
+
+| File | Runs Where | Role |
+|------|-----------|------|
+| `app.py` | **Server** (Python) | Flask web server + API routes + Azure SDK calls |
+| `templates/index.html` | **Server → Browser** | Flask renders it via `render_template()`, browser displays it |
+| `static/css/style.css` | **Browser** | Styling — fetched by browser via `<link>` tag |
+| `static/js/app.js` | **Browser** | D3.js mind map, `fetch()` calls to Flask API, UI interactions |
+
+> **Key insight:** `app.js` does **not** run on the server. It runs in the browser and communicates with the Flask backend via HTTP `fetch()` calls. Flask is the single entry point that serves both the static frontend files and the backend REST API.
+
 ---
 
 ## Azure Resources Created
