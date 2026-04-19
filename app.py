@@ -8,8 +8,6 @@ from werkzeug.utils import secure_filename
 from openai import AzureOpenAI
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from azure.identity import DefaultAzureCredential
-from azure.ai.inference import ChatCompletionsClient
-from azure.ai.inference.models import SystemMessage, UserMessage
 from PyPDF2 import PdfReader
 from docx import Document
 from dotenv import load_dotenv
@@ -39,22 +37,9 @@ aoai_client = AzureOpenAI(
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
 )
 GPT_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-41")
+O4_MINI_DEPLOYMENT = os.getenv("AZURE_O4MINI_DEPLOYMENT_NAME", "o4-mini")
 
-# ---------------------------------------------------------------------------
-# Azure AI Foundry — Claude via serverless MaaS endpoint
-# ---------------------------------------------------------------------------
-CLAUDE_ENDPOINT = os.getenv("AZURE_CLAUDE_ENDPOINT", "")
-CLAUDE_KEY = os.getenv("AZURE_CLAUDE_KEY", "")  # Serverless endpoints use key auth
-
-claude_client = None
-if CLAUDE_ENDPOINT:
-    claude_client = ChatCompletionsClient(
-        endpoint=CLAUDE_ENDPOINT,
-        credential=credential if not CLAUDE_KEY else None,
-        key=CLAUDE_KEY if CLAUDE_KEY else None,
-    )
-
-# Active model: "gpt" or "claude"
+# Active model: "gpt" or "o4-mini"
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt")
 
 # ---------------------------------------------------------------------------
@@ -126,36 +111,20 @@ def _call_llm(system_prompt: str, user_prompt: str, model: str = "gpt",
               max_tokens: int = 4096, json_mode: bool = False) -> str:
     """Route to the right LLM backend and return the text response."""
 
-    if model == "claude" and claude_client:
-        response = claude_client.complete(
-            messages=[
-                SystemMessage(content=system_prompt),
-                UserMessage(content=user_prompt),
-            ],
-            temperature=0.3,
-            max_tokens=max_tokens,
-        )
-        text = response.choices[0].message.content
-        # Claude doesn't have json_mode — strip markdown fences if present
-        if json_mode:
-            text = text.strip()
-            if text.startswith("```"):
-                text = "\n".join(text.split("\n")[1:])
-            if text.endswith("```"):
-                text = text.rsplit("```", 1)[0]
-            text = text.strip()
-        return text
+    deployment = O4_MINI_DEPLOYMENT if model == "o4-mini" else GPT_DEPLOYMENT
 
-    # Default: Azure OpenAI (GPT)
     kwargs = dict(
-        model=GPT_DEPLOYMENT,
+        model=deployment,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.3,
         max_tokens=max_tokens,
     )
+    # o4-mini is a reasoning model — it ignores temperature and uses
+    # reasoning_effort instead; keep temperature only for GPT models
+    if model != "o4-mini":
+        kwargs["temperature"] = 0.3
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
     response = aoai_client.chat.completions.create(**kwargs)
@@ -299,8 +268,7 @@ def list_documents():
 def get_models():
     models = [
         {"id": "gpt", "name": "GPT-4.1 (Azure OpenAI)", "available": True},
-        {"id": "claude", "name": "Claude Sonnet (Azure AI Foundry)",
-         "available": claude_client is not None},
+        {"id": "o4-mini", "name": "o4-mini Reasoning (Azure OpenAI)", "available": True},
     ]
     return jsonify({"models": models, "default": DEFAULT_MODEL})
 

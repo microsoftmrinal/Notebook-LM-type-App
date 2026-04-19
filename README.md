@@ -27,12 +27,13 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
 ## Features
 
 - **Document Upload** — Drag-and-drop or click to upload PDF, DOCX, or TXT files (up to 50 MB)
-- **AI-Powered Mind Maps** — Azure OpenAI (GPT-4.1) analyzes documents and generates hierarchical mind maps
+- **AI-Powered Mind Maps** — Azure OpenAI (GPT-4.1 or o4-mini) analyzes documents and generates hierarchical mind maps
 - **Interactive Visualization** — D3.js tree with zoom, pan, expand/collapse, and color-coded branches
 - **Click-to-Explore** — Click any node to see its summary; click "Explore More with AI" for a deep-dive explanation
 - **Multi-Document Support** — Upload multiple documents; switch between them via the sidebar
 - **Download PNG** — Export the mind map as a high-resolution PNG image
 - **Persistent Storage** — All documents and mind maps are stored in Azure Cosmos DB
+- **Dual Model Support** — Switch between GPT-4.1 (general-purpose) and o4-mini (advanced reasoning) via UI selector
 - **Azure AD Authentication** — Zero API keys at runtime; uses `DefaultAzureCredential` for both OpenAI and Cosmos DB
 
 ---
@@ -57,18 +58,21 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
               │  • Text extraction  │
               │  • Mind map gen     │
               │  • Node details     │
-              └──┬──────┬──────┬────┘
-                 │      │      │
-    AAD Token    │      │      │  Key / AAD
-                 ▼      │      ▼
-  ┌───────────────┐    │    ┌──────────────────────┐
-  │ Azure OpenAI  │    │    │ Azure AI Foundry     │
-  │ (GPT-4.1)     │    │    │ (Claude Sonnet)      │
-  │               │    │    │                      │
-  │ • Mind map    │    │    │ • Serverless MaaS    │
-  │   generation  │    │    │ • Mind map gen       │
-  │ • Deep dive   │    │    │ • Deep dive          │
-  └───────────────┘    │    └──────────────────────┘
+              └──┬──────────────┬────┘
+                 │              │
+    AAD Token    │              │  AAD Token
+                 ▼              ▼
+  ┌──────────────────────────────────┐
+  │        Azure OpenAI              │
+  │                                  │
+  │  ┌────────────┐ ┌─────────────┐  │
+  │  │  GPT-4.1   │ │  o4-mini    │  │
+  │  │ (general)  │ │ (reasoning) │  │
+  │  └────────────┘ └─────────────┘  │
+  │                                  │
+  │  • Mind map generation           │
+  │  • Deep-dive explanations        │
+  └──────────────────────────────────┘
                        │
               AAD Token│
                        ▼
@@ -97,9 +101,7 @@ All resources live under a single resource group: **`Notebook-LM-Like-on-Azure`*
 | 4 | **Azure Cosmos DB** | `learnmap-cosmosdb` | NoSQL / Serverless | West US 2 |
 | 5 | **Cosmos DB Database** | `learner_assistant` | SQL Database | — |
 | 6 | **Cosmos DB Container** | `documents` | Partition Key: `/id` | — |
-| 7 | **AI Foundry Hub** | `learnmap-ai-hub-eastus2` | ML Workspace / Hub | East US 2 |
-| 8 | **AI Foundry Project** | `learnmap-claude-project` | ML Workspace / Project | East US 2 |
-| 9 | **Claude Deployment** | _(deploy via portal)_ | Serverless MaaS | East US 2 |
+| 7 | **o4-mini Deployment** | `o4-mini` | GlobalStandard (1 TPM) | East US |
 
 ---
 
@@ -180,46 +182,25 @@ az cosmosdb sql role assignment create \
   --role-definition-id "00000000-0000-0000-0000-000000000002"
 ```
 
-### 7. Azure AI Foundry — Claude Deployment
+### 7. Deploy o4-mini Reasoning Model
 
-Azure AI Foundry provides access to Anthropic's Claude models via **Models-as-a-Service (MaaS)**. Claude is available in **East US 2** and **Sweden Central**.
+o4-mini is OpenAI's advanced reasoning model — it excels at analysis, logic, and structured tasks.
 
-**Step 1 — Hub & Project were created via CLI:**
 ```bash
-# Hub (already provisioned)
-az rest --method PUT \
-  --url "https://management.azure.com/subscriptions/<sub-id>/resourceGroups/Notebook-LM-Like-on-Azure/providers/Microsoft.MachineLearningServices/workspaces/learnmap-ai-hub-eastus2?api-version=2024-04-01" \
-  --body '{"location":"eastus2","kind":"Hub","properties":{},"identity":{"type":"SystemAssigned"}}'
-
-# Project (already provisioned)
-az rest --method PUT \
-  --url "https://management.azure.com/subscriptions/<sub-id>/resourceGroups/Notebook-LM-Like-on-Azure/providers/Microsoft.MachineLearningServices/workspaces/learnmap-claude-project?api-version=2024-04-01" \
-  --body '{"location":"eastus2","kind":"Project","properties":{"hubResourceId":"<hub-resource-id>"},"identity":{"type":"SystemAssigned"}}'
+az cognitiveservices account deployment create \
+  --name learnmap-openai \
+  --resource-group "Notebook-LM-Like-on-Azure" \
+  --deployment-name o4-mini \
+  --model-name o4-mini --model-version "2025-04-16" \
+  --model-format OpenAI \
+  --sku-capacity 1 --sku-name GlobalStandard
 ```
 
-**Step 2 — Deploy Claude via Azure AI Foundry Portal:**
-
-> Claude marketplace subscriptions require terms acceptance via the portal.
-
-1. Go to [Azure AI Foundry](https://ai.azure.com) → select **learnmap-claude-project**
-2. Navigate to **Model catalog** → search **"Claude"**
-3. Select a Claude model (e.g., Claude Sonnet 4.5, Claude Haiku 4.5)
-4. Click **"Use this model"** → review pricing → **Deploy**
-5. After deployment, note the **Target URI** and **Key** from the endpoint page
-6. Add to `.env`:
-   ```
-   AZURE_CLAUDE_ENDPOINT=https://<your-endpoint>.eastus2.models.ai.azure.com
-   AZURE_CLAUDE_KEY=<your-key>
-   DEFAULT_MODEL=claude
-   ```
-
-**Available Claude models on Azure AI Foundry:**
-| Model | Type | Best For |
-|-------|------|----------|
-| Claude Sonnet 4.5 | Preview | Balanced speed & quality |
-| Claude Sonnet 4.6 | Preview | Latest capabilities |
-| Claude Haiku 4.5 | Preview | Fast & cost-effective |
-| Claude Opus 4.1–4.7 | Preview | Maximum quality |
+**Model comparison:**
+| Model | Type | Best For | Strengths |
+|-------|------|----------|-----------|
+| **GPT-4.1** | General-purpose | Broad knowledge tasks | Fast, great for mind map generation |
+| **o4-mini** | Reasoning | Complex analysis | Superior logical reasoning, structured output |
 
 ---
 
@@ -251,7 +232,8 @@ az rest --method PUT \
    - Color-coded branches (12 distinct colors)
    - Hover tooltips showing node summaries
    - Node selection with detail panel integration
-4. **"Explore More with AI"** — Click any node, then click the button to get a GPT-powered deep-dive rendered in Markdown
+5. **"Explore More with AI"** — Click any node, then click the button to get an AI-powered deep-dive rendered in Markdown
+   - **Model selector** — Switch between GPT-4.1 and o4-mini reasoning model from the sidebar
 5. **PNG export** — SVG → Canvas → PNG at 2× resolution with white background
 6. **Toast notifications** — Success/error messages for all operations
 7. **Responsive design** — Sidebar collapses on small screens
@@ -326,12 +308,19 @@ NOTEBOOKLM - AZURE Project/
 
 ## Cost Breakdown
 
-### Azure OpenAI (GPT-4.1 — GlobalStandard)
+### Azure OpenAI (GPT-4.1 + o4-mini — GlobalStandard)
 
+**GPT-4.1:**
 | Operation | Tokens Used (est.) | Rate | Cost per Request |
 |-----------|-------------------|------|-----------------|
 | **Mind map generation** | ~4,000 input + ~2,000 output | $2.00/1M input, $8.00/1M output | ~$0.024 |
 | **Node deep-dive** | ~2,000 input + ~1,000 output | $2.00/1M input, $8.00/1M output | ~$0.012 |
+
+**o4-mini (reasoning model):**
+| Operation | Tokens Used (est.) | Rate | Cost per Request |
+|-----------|-------------------|------|-----------------|
+| **Mind map generation** | ~4,000 input + ~2,000 output | $1.10/1M input, $4.40/1M output | ~$0.013 |
+| **Node deep-dive** | ~2,000 input + ~1,000 output | $1.10/1M input, $4.40/1M output | ~$0.007 |
 
 | Usage Scenario | Monthly Est. |
 |----------------|-------------|
