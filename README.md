@@ -20,7 +20,8 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
 7. [Security Breakdown](#security-breakdown)
 8. [Cost Breakdown](#cost-breakdown)
 9. [How to Run](#how-to-run)
-10. [Screenshots](#screenshots)
+10. [Workshop Guide](#workshop-guide)
+11. [Screenshots](#screenshots)
 
 ---
 
@@ -435,6 +436,24 @@ Open **http://127.0.0.1:5000** in your browser.
 3. Click nodes to expand/collapse and view summaries
 4. Click **"Explore More with AI"** for detailed explanations
 5. Click **"Download PNG"** to export the mind map
+
+---
+
+## Workshop Guide
+
+A comprehensive **step-by-step workshop guide** is available for instructors and students:
+
+**[WORKSHOP_GUIDE.md](WORKSHOP_GUIDE.md)** — Build this application from scratch (~3 hours)
+
+Covers:
+- Component explanations (what each technology does and why it was chosen)
+- Azure resource provisioning with CLI commands and explanations
+- Backend development (Flask, file processing, AI integration)
+- Frontend development (HTML, CSS, D3.js mind map visualization)
+- Security hardening (RBAC, input validation, file handling)
+- Adding a second AI model (o4-mini reasoning)
+- Common errors & troubleshooting
+- Bonus challenges for advanced students
 
 ---
 

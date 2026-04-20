@@ -33,7 +33,7 @@ aoai_client = AzureOpenAI(
     azure_ad_token_provider=lambda: credential.get_token(
         "https://cognitiveservices.azure.com/.default"
     ).token,
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
 )
 GPT_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-41")
@@ -113,16 +113,19 @@ def _call_llm(system_prompt: str, user_prompt: str, model: str = "gpt",
 
     deployment = O4_MINI_DEPLOYMENT if model == "o4-mini" else GPT_DEPLOYMENT
 
+    # o4-mini is a reasoning model — it uses max_completion_tokens (not
+    # max_tokens) and ignores temperature.
+    token_param = "max_completion_tokens" if model == "o4-mini" else "max_tokens"
+
     kwargs = dict(
         model=deployment,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        max_tokens=max_tokens,
     )
-    # o4-mini is a reasoning model — it ignores temperature and uses
-    # reasoning_effort instead; keep temperature only for GPT models
+    kwargs[token_param] = max_tokens
+
     if model != "o4-mini":
         kwargs["temperature"] = 0.3
     if json_mode:
