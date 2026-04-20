@@ -44,13 +44,25 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt")
 
 # ---------------------------------------------------------------------------
 # Azure Cosmos DB  –  singleton client, database & container
+# Supports both the local emulator (key auth) and cloud (AAD auth)
 # ---------------------------------------------------------------------------
-cosmos_client = CosmosClient(
-    os.getenv("COSMOS_DB_ENDPOINT"),
-    credential=credential,
-)
-database = cosmos_client.get_database_client("learner_assistant")
-container = database.get_container_client("documents")
+_cosmos_endpoint = os.getenv("COSMOS_DB_ENDPOINT", "https://localhost:8081/")
+_cosmos_key = os.getenv("COSMOS_DB_KEY", "")
+_use_emulator = "localhost" in _cosmos_endpoint
+
+if _use_emulator:
+    # Local Cosmos DB Emulator — uses the well-known account key
+    cosmos_client = CosmosClient(_cosmos_endpoint, credential=_cosmos_key)
+    # Auto-create database & container on the emulator (starts empty)
+    database = cosmos_client.create_database_if_not_exists("learner_assistant")
+    container = database.create_container_if_not_exists(
+        "documents", partition_key=PartitionKey(path="/id")
+    )
+else:
+    # Cloud Cosmos DB — uses Azure AD (DefaultAzureCredential)
+    cosmos_client = CosmosClient(_cosmos_endpoint, credential=credential)
+    database = cosmos_client.get_database_client("learner_assistant")
+    container = database.get_container_client("documents")
 
 # ---------------------------------------------------------------------------
 # Helpers
