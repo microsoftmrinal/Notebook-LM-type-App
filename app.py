@@ -15,11 +15,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
+app.config["MAX_CONTENT_LENGTH"] = 250 * 1024 * 1024  # 250 MB
 app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads")
 ALLOWED_EXTENSIONS = {"pdf", "docx", "doc", "txt"}
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({"error": "File too large. Maximum size is 250 MB."}), 413
+
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    return jsonify({"error": "Internal server error. Please try again."}), 500
+
 
 # ---------------------------------------------------------------------------
 # Shared AAD credential (used for OpenAI, Cosmos DB, and AI Foundry)
@@ -73,12 +84,18 @@ def allowed_file(filename: str) -> bool:
 
 
 def extract_text_from_pdf(filepath: str) -> str:
-    reader = PdfReader(filepath)
+    try:
+        reader = PdfReader(filepath)
+    except Exception as exc:
+        raise ValueError(f"Could not read PDF: {exc}")
     parts: list[str] = []
     for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            parts.append(text)
+        try:
+            text = page.extract_text()
+            if text:
+                parts.append(text)
+        except Exception:
+            continue  # skip unreadable pages
     return "\n".join(parts)
 
 

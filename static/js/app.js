@@ -74,7 +74,9 @@ async function handleFile(file) {
 
   try {
     const res = await fetch("/upload", { method: "POST", body: form });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error(`Server error (${res.status}). The PDF may be too large or unreadable.`); }
     if (!res.ok) throw new Error(data.error || "Upload failed");
 
     showToast(`"${data.filename}" processed successfully!`, "success");
@@ -174,7 +176,9 @@ async function selectDocument(docId, docName) {
   showLoading("Loading mind map…");
   try {
     const res = await fetch(`/mindmap/${docId}`);
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error(`Server error (${res.status}).`); }
     if (!res.ok) throw new Error(data.error || "Failed to load");
     activateDocument(data.id, data.filename, data.mindMap);
   } catch (err) {
@@ -546,7 +550,9 @@ async function exploreMore() {
         model: getSelectedModel(),
       }),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error(`Server error (${res.status}).`); }
     if (!res.ok) throw new Error(data.error);
 
     document.getElementById("detail-extended").innerHTML = marked.parse(data.details);
