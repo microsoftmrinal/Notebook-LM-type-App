@@ -237,10 +237,12 @@ function setupToolbar() {
   document.getElementById("btn-collapse-all").addEventListener("click", collapseAll);
   document.getElementById("btn-close-panel").addEventListener("click", closeDetailPanel);
   document.getElementById("btn-explore-more").addEventListener("click", exploreMore);
+  document.getElementById("btn-quiz").addEventListener("click", openQuiz);
+  setupQuizModal();
 }
 
 function setToolbarButtons(enabled) {
-  ["btn-zoom-fit", "btn-download", "btn-expand-all", "btn-collapse-all"].forEach((id) => {
+  ["btn-zoom-fit", "btn-download", "btn-expand-all", "btn-collapse-all", "btn-quiz"].forEach((id) => {
     document.getElementById(id).disabled = !enabled;
   });
 }
@@ -649,4 +651,141 @@ function showToast(message, type = "info") {
   el.innerHTML = `<i class="fas fa-${type === "success" ? "check-circle" : type === "error" ? "exclamation-circle" : "info-circle"}"></i> ${message}`;
   container.appendChild(el);
   setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 4000);
+}
+
+// ---------------------------------------------------------------------------
+// Quiz
+// ---------------------------------------------------------------------------
+const quizState = { questions: [], answers: {}, submitted: false };
+
+function setupQuizModal() {
+  document.getElementById("btn-quiz-close").addEventListener("click", closeQuiz);
+  document.getElementById("btn-quiz-regenerate").addEventListener("click", () => loadQuiz(true));
+  document.getElementById("btn-quiz-submit").addEventListener("click", submitQuiz);
+  document.getElementById("quiz-modal").addEventListener("click", (e) => {
+    if (e.target.id === "quiz-modal") closeQuiz();
+  });
+}
+
+function openQuiz() {
+  if (!state.currentDocId) {
+    showToast("Select a document first.", "warning");
+    return;
+  }
+  document.getElementById("quiz-modal").classList.remove("hidden");
+  loadQuiz(false);
+}
+
+function closeQuiz() {
+  document.getElementById("quiz-modal").classList.add("hidden");
+}
+
+async function loadQuiz(regenerate) {
+  const body = document.getElementById("quiz-body");
+  const submitBtn = document.getElementById("btn-quiz-submit");
+  const statusEl = document.getElementById("quiz-status");
+  const numQuestions = parseInt(document.getElementById("quiz-num-questions").value, 10) || 5;
+
+  quizState.questions = [];
+  quizState.answers = {};
+  quizState.submitted = false;
+  submitBtn.disabled = true;
+  statusEl.className = "quiz-status";
+  statusEl.textContent = "";
+  body.innerHTML = `<div class="quiz-loading"><div class="spinner" style="margin: 0 auto 12px;"></div>Generating ${numQuestions} quiz questions…</div>`;
+
+  try {
+    const res = await fetch("/quiz", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        documentId: state.currentDocId,
+        numQuestions: numQuestions,
+        model: getSelectedModel(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to generate quiz");
+
+    quizState.questions = data.questions || [];
+    document.getElementById("quiz-title").innerHTML =
+      `<i class="fas fa-question-circle"></i> ${escapeHtml(data.title || "Quiz")}`;
+    renderQuiz();
+    submitBtn.disabled = false;
+  } catch (err) {
+    body.innerHTML = `<div class="quiz-loading" style="color: var(--error);"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderQuiz() {
+  const body = document.getElementById("quiz-body");
+  body.innerHTML = "";
+  quizState.questions.forEach((q, qi) => {
+    const block = document.createElement("div");
+    block.className = "quiz-question";
+    block.innerHTML = `
+      <div class="quiz-question-prompt">
+        <span class="quiz-num">${qi + 1}</span>${escapeHtml(q.question)}
+      </div>
+      <div class="quiz-options">
+        ${q.options.map((opt, oi) => `
+          <label class="quiz-option" data-q="${qi}" data-o="${oi}">
+            <input type="radio" name="q-${qi}" value="${oi}" />
+            <span>${escapeHtml(opt)}</span>
+          </label>
+        `).join("")}
+      </div>
+    `;
+    body.appendChild(block);
+  });
+
+  body.querySelectorAll('input[type="radio"]').forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const qi = parseInt(e.target.name.split("-")[1], 10);
+      quizState.answers[qi] = parseInt(e.target.value, 10);
+    });
+  });
+}
+
+function submitQuiz() {
+  if (quizState.submitted) return;
+  const total = quizState.questions.length;
+  let correct = 0;
+
+  quizState.questions.forEach((q, qi) => {
+    const userAns = quizState.answers[qi];
+    const isCorrect = userAns === q.correctIndex;
+    if (isCorrect) correct++;
+
+    const optionLabels = document.querySelectorAll(`.quiz-option[data-q="${qi}"]`);
+    optionLabels.forEach((label) => {
+      const oi = parseInt(label.dataset.o, 10);
+      label.classList.add("disabled");
+      label.querySelector("input").disabled = true;
+      if (oi === q.correctIndex) label.classList.add("correct");
+      else if (oi === userAns) label.classList.add("incorrect");
+    });
+
+    const block = optionLabels[0]?.closest(".quiz-question");
+    if (block && q.explanation) {
+      const exp = document.createElement("div");
+      exp.className = "quiz-explanation";
+      exp.innerHTML = `<strong>${isCorrect ? "✓ Correct." : "✗ Explanation:"}</strong> ${escapeHtml(q.explanation)}`;
+      block.appendChild(exp);
+    }
+  });
+
+  quizState.submitted = true;
+  document.getElementById("btn-quiz-submit").disabled = true;
+
+  const pct = Math.round((correct / total) * 100);
+  const statusEl = document.getElementById("quiz-status");
+  statusEl.textContent = `Score: ${correct}/${total} (${pct}%)`;
+  statusEl.classList.add(pct >= 60 ? "passed" : "failed");
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
 }

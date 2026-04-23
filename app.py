@@ -226,6 +226,68 @@ def get_node_details(node_name: str, node_summary: str, doc_text: str,
 
 
 # ---------------------------------------------------------------------------
+# Quiz generation
+# ---------------------------------------------------------------------------
+
+def generate_quiz(text: str, filename: str, num_questions: int = 5,
+                  model: str = "gpt") -> dict:
+    """Generate a multiple-choice quiz from document text."""
+    num_questions = max(3, min(int(num_questions or 5), 15))
+    chunks = chunk_text(text)
+    combined = "\n\n".join(chunks[:5])[:60_000]
+
+    prompt = (
+        f"Create a multiple-choice quiz with EXACTLY {num_questions} questions "
+        "based on the document below. The quiz should help a learner test their "
+        "understanding of the most important concepts.\n\n"
+        "Rules:\n"
+        "1. Each question must have EXACTLY 4 answer options.\n"
+        "2. Exactly ONE option is correct.\n"
+        "3. Distractors (wrong options) should be plausible but clearly incorrect.\n"
+        "4. Mix difficulty: ~40% easy recall, ~40% conceptual, ~20% application.\n"
+        "5. Cover different topics across the document — do NOT repeat themes.\n"
+        "6. Provide a 1-2 sentence explanation for the correct answer.\n\n"
+        "Return ONLY valid JSON with this exact schema:\n"
+        "{\n"
+        '  "title": "Quiz: <document topic>",\n'
+        '  "questions": [\n'
+        "    {\n"
+        '      "question": "<question text>",\n'
+        '      "options": ["<A>", "<B>", "<C>", "<D>"],\n'
+        '      "correctIndex": 0,\n'
+        '      "explanation": "<why the correct answer is right>"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        f"Document filename: {filename}\n\n"
+        f"Document content:\n{combined}"
+    )
+
+    system_prompt = (
+        "You are an expert educator who designs effective learning assessments. "
+        "Create clear, fair, and pedagogically sound multiple-choice questions. "
+        "Always return valid JSON only — no markdown, no commentary."
+    )
+
+    raw = _call_llm(system_prompt, prompt, model=model,
+                    max_tokens=4096, json_mode=True)
+    quiz = json.loads(raw)
+
+    # Defensive validation — make sure structure is sane before returning.
+    questions = quiz.get("questions", [])
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("Quiz generation returned no questions.")
+    for q in questions:
+        opts = q.get("options", [])
+        if not isinstance(opts, list) or len(opts) != 4:
+            raise ValueError("Quiz question must have exactly 4 options.")
+        ci = q.get("correctIndex")
+        if not isinstance(ci, int) or ci < 0 or ci > 3:
+            raise ValueError("Quiz question has invalid correctIndex.")
+    return quiz
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -351,6 +413,36 @@ def delete_document(doc_id):
         return jsonify({"message": "Document deleted"})
     except exceptions.CosmosResourceNotFoundError:
         return jsonify({"error": "Document not found"}), 404
+
+
+@app.route("/quiz", methods=["POST"])
+def quiz():
+    """Generate a multiple-choice quiz for a stored document."""
+    data = request.get_json(silent=True) or {}
+    doc_id = data.get("documentId")
+    num_questions = data.get("numQuestions", 5)
+    selected_model = data.get("model", DEFAULT_MODEL)
+
+    if not doc_id:
+        return jsonify({"error": "Missing documentId"}), 400
+
+    try:
+        item = container.read_item(item=doc_id, partition_key=doc_id)
+        text = item.get("textContent", "")
+        if not text.strip():
+            return jsonify({"error": "Document has no text content."}), 400
+
+        quiz_data = generate_quiz(
+            text,
+            item.get("filename", "document"),
+            num_questions=num_questions,
+            model=selected_model,
+        )
+        return jsonify(quiz_data)
+    except exceptions.CosmosResourceNotFoundError:
+        return jsonify({"error": "Document not found"}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 # ---------------------------------------------------------------------------
