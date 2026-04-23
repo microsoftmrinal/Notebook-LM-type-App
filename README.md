@@ -31,6 +31,7 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
 - **AI-Powered Mind Maps** — Azure OpenAI (GPT-4.1 or o4-mini) analyzes documents and generates hierarchical mind maps
 - **Interactive Visualization** — D3.js tree with zoom, pan, expand/collapse, and color-coded branches
 - **Click-to-Explore** — Click any node to see its summary; click "Explore More with AI" for a deep-dive explanation
+- **Quiz Me** — Generate AI-powered multiple-choice quizzes (3 / 5 / 10 questions) from any uploaded document, with instant scoring and per-question explanations
 - **Multi-Document Support** — Upload multiple documents; switch between them via the sidebar
 - **Download PNG** — Export the mind map as a high-resolution PNG image
 - **Persistent Storage** — All documents and mind maps are stored in Azure Cosmos DB
@@ -117,6 +118,7 @@ Browser visits http://127.0.0.1:5000/
             ├── POST /upload        → processes file → Azure OpenAI → Cosmos DB
             ├── GET  /mindmap/<id>  → returns mind map JSON
             ├── POST /node-details  → calls Azure OpenAI for deep-dive
+            ├── POST /quiz          → generates multiple-choice quiz from document
             └── DELETE /document/<id> → removes from Cosmos DB
 ```
 
