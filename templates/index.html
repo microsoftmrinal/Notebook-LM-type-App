@@ -79,6 +79,9 @@
           <button id="btn-collapse-all" class="toolbar-btn" title="Collapse nodes" disabled>
             <i class="fas fa-compress-alt"></i> Collapse
           </button>
+          <button id="btn-quiz" class="toolbar-btn" title="Generate a quiz from this document" disabled>
+            <i class="fas fa-question-circle"></i> Quiz Me
+          </button>
           <button id="btn-download" class="toolbar-btn btn-primary" title="Download mind map as PNG" disabled>
             <i class="fas fa-download"></i> Download PNG
           </button>
@@ -145,6 +148,37 @@
     <div class="spinner-wrapper">
       <div class="spinner"></div>
       <p id="loading-message">Processing your document…</p>
+    </div>
+  </div>
+
+  <!-- Quiz modal -->
+  <div id="quiz-modal" class="quiz-modal hidden">
+    <div class="quiz-dialog">
+      <header class="quiz-header">
+        <h3 id="quiz-title"><i class="fas fa-question-circle"></i> Quiz</h3>
+        <div class="quiz-header-actions">
+          <select id="quiz-num-questions" class="quiz-select" title="Number of questions">
+            <option value="3">3 questions</option>
+            <option value="5" selected>5 questions</option>
+            <option value="10">10 questions</option>
+          </select>
+          <button id="btn-quiz-regenerate" class="btn-icon" title="Regenerate quiz">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+          <button id="btn-quiz-close" class="btn-icon" title="Close quiz">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </header>
+      <div class="quiz-body" id="quiz-body">
+        <!-- Quiz questions injected here -->
+      </div>
+      <footer class="quiz-footer">
+        <div id="quiz-status" class="quiz-status"></div>
+        <button id="btn-quiz-submit" class="btn-explore" disabled>
+          <i class="fas fa-check"></i> Submit Answers
+        </button>
+      </footer>
     </div>
   </div>
 
