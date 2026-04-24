@@ -15,13 +15,14 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
 2. [Architecture Overview](#architecture-overview)
 3. [Azure Resources Created](#azure-resources-created)
 4. [Step-by-Step Azure Setup](#step-by-step-azure-setup)
-5. [Step-by-Step Application Build](#step-by-step-application-build)
-6. [Project Structure](#project-structure)
-7. [Security Breakdown](#security-breakdown)
-8. [Cost Breakdown](#cost-breakdown)
-9. [How to Run](#how-to-run)
-10. [Workshop Guide](#workshop-guide)
-11. [Screenshots](#screenshots)
+5. [One-Click Deploy with Terraform](#one-click-deploy-with-terraform)
+6. [Step-by-Step Application Build](#step-by-step-application-build)
+7. [Project Structure](#project-structure)
+8. [Security Breakdown](#security-breakdown)
+9. [Cost Breakdown](#cost-breakdown)
+10. [How to Run](#how-to-run)
+11. [Workshop Guide](#workshop-guide)
+12. [Screenshots](#screenshots)
 
 ---
 
@@ -247,6 +248,137 @@ az cognitiveservices account deployment create \
 |-------|------|----------|-----------|
 | **GPT-4.1** | General-purpose | Broad knowledge tasks | Fast, great for mind map generation |
 | **o4-mini** | Reasoning | Complex analysis | Superior logical reasoning, structured output |
+
+---
+
+## One-Click Deploy with Terraform
+
+Prefer Infrastructure-as-Code over running the `az` commands above? The [`terraform/`](terraform/) folder provisions **everything in one shot** — resource group, Azure OpenAI account, both model deployments, Cosmos DB serverless account/database/container, *and* the AAD role assignments your app needs at runtime.
+
+### What gets created
+
+Identical to the [Azure Resources Created](#azure-resources-created) table above, plus two RBAC role assignments scoped to the developer running the app:
+
+| RBAC role | Scope | Why |
+|-----------|-------|-----|
+| `Cognitive Services OpenAI User` | The AOAI account | Lets `DefaultAzureCredential` call `/chat/completions` |
+| `Cosmos DB Built-in Data Contributor` | The Cosmos DB account | Lets the app read/write items without account keys |
+
+> Cosmos DB is provisioned with `local_authentication_disabled = true` — **no account keys are ever issued**, matching the production-grade AAD-only posture documented in the [Security Breakdown](#security-breakdown).
+
+### Prerequisites
+
+| Tool | Minimum version | Install |
+|------|-----------------|---------|
+| Terraform | 1.5.0 | <https://developer.hashicorp.com/terraform/install> |
+| Azure CLI | 2.50 | <https://learn.microsoft.com/cli/azure/install-azure-cli> |
+| Azure subscription | Owner or Contributor + User Access Administrator | (needed to create role assignments) |
+
+### Step 1 — Authenticate to Azure
+
+```powershell
+az login
+az account set --subscription "<your-subscription-id>"
+
+# Verify
+az account show --query "{name:name, id:id, user:user.name}" -o table
+```
+
+Terraform's `azurerm` provider picks up this `az login` session automatically — no service principal needed for local dev.
+
+### Step 2 — (Optional) Customize variable values
+
+The defaults match the names in this README. If you're sharing the subscription with others, override the globally-unique account names by creating `terraform/terraform.tfvars`:
+
+```hcl
+openai_account_name = "learnmap-openai-<your-alias>"
+cosmos_account_name = "learnmap-cosmosdb-<your-alias>"
+
+# Optional regional / capacity tweaks
+location_openai     = "eastus"
+location_cosmos     = "westus2"
+gpt41_capacity      = 30   # TPM in thousands
+o4mini_capacity     = 1
+```
+
+Full variable list lives in [`terraform/variables.tf`](terraform/variables.tf).
+
+### Step 3 — Initialize Terraform
+
+```powershell
+cd terraform
+terraform init
+```
+
+This downloads the `azurerm` and `azapi` providers into `.terraform/`.
+
+### Step 4 — Preview the plan
+
+```powershell
+terraform plan -out tfplan
+```
+
+You should see ~9 resources to add (RG, AOAI account, 2 deployments, Cosmos account, DB, container, 2 role assignments). Review carefully before applying.
+
+### Step 5 — Apply
+
+```powershell
+terraform apply tfplan
+```
+
+Takes ~5–10 minutes. The Cosmos DB account is the slowest part (~5 min).
+
+### Step 6 — Capture the outputs
+
+```powershell
+terraform output env_file_snippet
+```
+
+This prints a ready-to-paste `.env` block:
+
+```env
+AZURE_OPENAI_ENDPOINT=https://learnmap-openai.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2025-01-01-preview
+AZURE_OPENAI_GPT_DEPLOYMENT=gpt-41
+AZURE_OPENAI_O4MINI_DEPLOYMENT=o4-mini
+COSMOS_DB_ENDPOINT=https://learnmap-cosmosdb.documents.azure.com:443/
+COSMOS_DB_DATABASE=learner_assistant
+COSMOS_DB_CONTAINER=documents
+```
+
+Copy that into the project's `.env` file at the repo root.
+
+### Step 7 — Run the app
+
+```powershell
+cd ..
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python app.py
+```
+
+Open <http://127.0.0.1:5000>. Done.
+
+### Tear it all down
+
+When the workshop is over, one command removes every Azure resource Terraform created:
+
+```powershell
+cd terraform
+terraform destroy
+```
+
+> **Tip:** If you skipped the `tfvars` step and reused the default account names, two people in the same subscription cannot deploy at once — the `learnmap-openai` and `learnmap-cosmosdb` names are globally unique across all of Azure.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Error: ... InsufficientQuota` on `gpt-41` | Lower `gpt41_capacity` in `terraform.tfvars`, or request a quota increase in the Azure portal |
+| `Error: ... AuthorizationFailed` on role assignment | Your account needs **User Access Administrator** in addition to Contributor |
+| `Error: name "learnmap-openai" is already taken` | Override `openai_account_name` in `terraform.tfvars` |
+| Cosmos DB stuck `Creating...` for >10 min | Check the Activity Log in the Azure portal; usually a regional capacity issue — try a different `location_cosmos` |
 
 ---
 
