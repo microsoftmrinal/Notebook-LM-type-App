@@ -8,6 +8,7 @@
 const state = {
   currentDocId: null,
   currentDocTitle: "",
+  currentUser: null,
   root: null,          // d3-hierarchy root
   svg: null,
   g: null,             // <g> that holds the tree inside the svg
@@ -27,6 +28,7 @@ const DURATION = 420;
 // Bootstrap
 // ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
+  setupAuth();
   setupUpload();
   setupToolbar();
   loadDocuments();
@@ -235,16 +237,152 @@ function setupToolbar() {
   document.getElementById("btn-download").addEventListener("click", downloadPNG);
   document.getElementById("btn-expand-all").addEventListener("click", expandAll);
   document.getElementById("btn-collapse-all").addEventListener("click", collapseAll);
+  document.getElementById("btn-flashcards").addEventListener("click", openFlashcards);
   document.getElementById("btn-close-panel").addEventListener("click", closeDetailPanel);
   document.getElementById("btn-explore-more").addEventListener("click", exploreMore);
   document.getElementById("btn-quiz").addEventListener("click", openQuiz);
   setupQuizModal();
+  setupFlashcardsModal();
 }
 
 function setToolbarButtons(enabled) {
-  ["btn-zoom-fit", "btn-download", "btn-expand-all", "btn-collapse-all", "btn-quiz"].forEach((id) => {
+  ["btn-zoom-fit", "btn-download", "btn-expand-all", "btn-collapse-all", "btn-quiz", "btn-flashcards"].forEach((id) => {
     document.getElementById(id).disabled = !enabled;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Simple session auth
+// ---------------------------------------------------------------------------
+let msalClient = null;
+
+function setupAuth() {
+  const loginBtn = document.getElementById("btn-login");
+  const logoutBtn = document.getElementById("btn-logout");
+  const emailInput = document.getElementById("login-email");
+  const msalLoginBtn = document.getElementById("btn-msal-login");
+
+  // Dev-mode email login
+  loginBtn?.addEventListener("click", async () => {
+    const email = (emailInput?.value || "").trim();
+    if (!email) {
+      showToast("Enter your email to log in.", "warning");
+      return;
+    }
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Login failed");
+      state.currentUser = data.user || null;
+      updateAuthUI();
+      showToast(`Logged in as ${state.currentUser?.email || email}.`, "success");
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  });
+
+  // MSAL login (Azure AD)
+  msalLoginBtn?.addEventListener("click", async () => {
+    try {
+      if (!msalClient) {
+        showToast("Azure AD not configured.", "error");
+        return;
+      }
+      const response = await msalClient.loginPopup({
+        scopes: ["openid", "profile", "email"],
+      });
+      if (response && response.accessToken) {
+        // Send token to backend for validation
+        const res = await fetch("/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${response.accessToken}`,
+          },
+          body: JSON.stringify({ token: response.accessToken }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Login failed");
+        state.currentUser = data.user || null;
+        updateAuthUI();
+        showToast(`Logged in as ${state.currentUser?.email}.`, "success");
+      }
+    } catch (err) {
+      showToast(err.message || "Azure AD login failed.", "error");
+    }
+  });
+
+  logoutBtn?.addEventListener("click", async () => {
+    try {
+      if (msalClient) {
+        await msalClient.logout();
+      }
+      await fetch("/auth/logout", { method: "POST" });
+      state.currentUser = null;
+      updateAuthUI();
+      showToast("Logged out.", "success");
+    } catch {
+      showToast("Logout failed.", "error");
+    }
+  });
+
+  loadAuthState();
+}
+
+async function loadAuthState() {
+  try {
+    const res = await fetch("/auth/me");
+    const data = await res.json();
+    state.currentUser = data.loggedIn ? data.user : null;
+    
+    // Initialize MSAL if enabled
+    if (data.msalEnabled && data.clientId && data.tenantId) {
+      initMSAL(data.clientId, data.tenantId, data.appIdUri);
+    }
+    
+    updateAuthUI();
+  } catch {
+    state.currentUser = null;
+    updateAuthUI();
+  }
+}
+
+function initMSAL(clientId, tenantId, appIdUri) {
+  const msalConfig = {
+    auth: {
+      clientId: clientId,
+      authority: `https://login.microsoftonline.com/${tenantId}`,
+      redirectUri: window.location.origin,
+    },
+    cache: {
+      cacheLocation: "sessionStorage",
+      storeAuthStateInCookie: false,
+    },
+  };
+
+  msalClient = new msal.PublicClientApplication(msalConfig);
+  
+  // Show MSAL login button
+  document.getElementById("auth-msal-ui").classList.remove("hidden");
+  document.getElementById("auth-email-ui").classList.add("hidden");
+}
+
+function updateAuthUI() {
+  const loggedOut = document.getElementById("auth-logged-out");
+  const loggedIn = document.getElementById("auth-logged-in");
+  const label = document.getElementById("auth-user-label");
+
+  const isLoggedIn = !!state.currentUser;
+  loggedOut?.classList.toggle("hidden", isLoggedIn);
+  loggedIn?.classList.toggle("hidden", !isLoggedIn);
+
+  if (isLoggedIn && label) {
+    label.textContent = state.currentUser.email || "Logged in";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -788,4 +926,143 @@ function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
+}
+
+// ---------------------------------------------------------------------------
+// Flashcards
+// ---------------------------------------------------------------------------
+const flashcardState = { cards: [], index: 0, title: "" };
+
+function setupFlashcardsModal() {
+  document.getElementById("btn-flashcards-close").addEventListener("click", closeFlashcards);
+  document.getElementById("btn-flashcards-regenerate").addEventListener("click", () => loadFlashcards(true));
+  document.getElementById("btn-flashcards-download").addEventListener("click", () => downloadFlashcards("csv"));
+  document.getElementById("btn-flashcards-download-json").addEventListener("click", () => downloadFlashcards("json"));
+  document.getElementById("btn-flashcards-prev").addEventListener("click", prevFlashcard);
+  document.getElementById("btn-flashcards-next").addEventListener("click", nextFlashcard);
+  document.getElementById("flashcards-modal").addEventListener("click", (e) => {
+    if (e.target.id === "flashcards-modal") closeFlashcards();
+  });
+  document.getElementById("flashcard").addEventListener("click", () => {
+    document.getElementById("flashcard").classList.toggle("flipped");
+  });
+}
+
+function openFlashcards() {
+  if (!state.currentDocId) {
+    showToast("Select a document first.", "warning");
+    return;
+  }
+  document.getElementById("flashcards-modal").classList.remove("hidden");
+  loadFlashcards(false);
+}
+
+function closeFlashcards() {
+  document.getElementById("flashcards-modal").classList.add("hidden");
+}
+
+async function loadFlashcards(regenerate) {
+  const empty = document.getElementById("flashcards-empty");
+  const stage = document.getElementById("flashcard-stage");
+  const numCards = parseInt(document.getElementById("flashcards-num-cards").value, 10) || 12;
+
+  flashcardState.cards = [];
+  flashcardState.index = 0;
+  flashcardState.title = "";
+
+  empty.classList.remove("hidden");
+  stage.classList.add("hidden");
+  empty.innerHTML = `<div class="spinner" style="margin: 0 auto 12px;"></div>Generating ${numCards} flashcards...`;
+
+  try {
+    const res = await fetch("/flashcards", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        documentId: state.currentDocId,
+        numCards: numCards,
+        model: getSelectedModel(),
+        regenerate: !!regenerate,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to generate flashcards");
+
+    flashcardState.cards = data.cards || [];
+    flashcardState.title = data.title || "Flashcards";
+    document.getElementById("flashcards-title").innerHTML =
+      `<i class="fas fa-layer-group"></i> ${escapeHtml(flashcardState.title)}`;
+
+    if (!flashcardState.cards.length) {
+      throw new Error("No flashcards were returned.");
+    }
+
+    empty.classList.add("hidden");
+    stage.classList.remove("hidden");
+    renderFlashcard();
+  } catch (err) {
+    empty.classList.remove("hidden");
+    stage.classList.add("hidden");
+    empty.innerHTML = `<span style="color: var(--error);"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(err.message)}</span>`;
+  }
+}
+
+function renderFlashcard() {
+  const total = flashcardState.cards.length;
+  const idx = flashcardState.index;
+  const card = flashcardState.cards[idx];
+  if (!card) return;
+
+  document.getElementById("flashcard-counter").textContent = `Card ${idx + 1} of ${total}`;
+  document.getElementById("flashcard-front-text").textContent = card.front || "";
+  document.getElementById("flashcard-back-text").textContent = card.back || "";
+  document.getElementById("flashcard-hint").textContent = card.hint ? `Hint: ${card.hint}` : "";
+  document.getElementById("flashcard").classList.remove("flipped");
+
+  document.getElementById("btn-flashcards-prev").disabled = idx <= 0;
+  document.getElementById("btn-flashcards-next").disabled = idx >= total - 1;
+}
+
+function prevFlashcard() {
+  if (flashcardState.index <= 0) return;
+  flashcardState.index -= 1;
+  renderFlashcard();
+}
+
+function nextFlashcard() {
+  if (flashcardState.index >= flashcardState.cards.length - 1) return;
+  flashcardState.index += 1;
+  renderFlashcard();
+}
+
+async function downloadFlashcards(format = "csv") {
+  if (!state.currentDocId) return;
+
+  try {
+    const res = await fetch(`/flashcards/${state.currentDocId}/download?format=${format}`);
+    if (!res.ok) {
+      const txt = await res.text();
+      let msg = "Download failed.";
+      try { msg = JSON.parse(txt).error || msg; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+
+    const blob = await res.blob();
+    const cd = res.headers.get("content-disposition") || "";
+    const fileNameMatch = cd.match(/filename=\"?([^\";]+)\"?/i);
+    const fileName = fileNameMatch ? fileNameMatch[1] : `${state.currentDocTitle || "flashcards"}-flashcards.${format}`;
+
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast(`Flashcards downloaded as ${format.toUpperCase()}.`, "success");
+  } catch (err) {
+    if ((err.message || "").toLowerCase().includes("log in")) {
+      showToast("Please log in to download flashcards.", "warning");
+      return;
+    }
+    showToast(err.message || "Download failed.", "error");
+  }
 }

@@ -18,6 +18,10 @@
   <!-- Marked.js (Markdown rendering) -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
+  <!-- MSAL.js (Microsoft Authentication Library) -->
+  <script src="https://alcdn.msauth.net/browser/2.30.0/ms-auth-helper.js"></script>
+  <script src="https://alcdn.msauth.net/browser/2.30.0/msal-browser.umd.min.js"></script>
+
   <!-- App CSS -->
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
@@ -32,6 +36,23 @@
           <span>LearnMap AI</span>
         </div>
         <p class="tagline">Your Intelligent Learner Assistant</p>
+        <div class="auth-box">
+          <div id="auth-logged-out" class="auth-state">
+            <div id="auth-msal-ui" class="auth-msal-ui hidden">
+              <button id="btn-msal-login" class="auth-btn auth-btn-azure" title="Sign in with Azure AD">
+                <i class="fas fa-cloud"></i> Sign in with Azure
+              </button>
+            </div>
+            <div id="auth-email-ui" class="auth-email-ui">
+              <input id="login-email" type="email" class="auth-input" placeholder="Enter email (dev mode)" />
+              <button id="btn-login" class="auth-btn"><i class="fas fa-sign-in-alt"></i> Log In</button>
+            </div>
+          </div>
+          <div id="auth-logged-in" class="auth-state hidden">
+            <div class="auth-user"><i class="fas fa-user-circle"></i> <span id="auth-user-label"></span></div>
+            <button id="btn-logout" class="auth-btn auth-btn-secondary"><i class="fas fa-sign-out-alt"></i> Log Out</button>
+          </div>
+        </div>
       </div>
 
       <!-- Upload -->
@@ -81,6 +102,9 @@
           </button>
           <button id="btn-quiz" class="toolbar-btn" title="Generate a quiz from this document" disabled>
             <i class="fas fa-question-circle"></i> Quiz Me
+          </button>
+          <button id="btn-flashcards" class="toolbar-btn" title="Generate flashcards from this document" disabled>
+            <i class="fas fa-layer-group"></i> Flashcards
           </button>
           <button id="btn-download" class="toolbar-btn btn-primary" title="Download mind map as PNG" disabled>
             <i class="fas fa-download"></i> Download PNG
@@ -179,6 +203,58 @@
           <i class="fas fa-check"></i> Submit Answers
         </button>
       </footer>
+    </div>
+  </div>
+
+  <!-- Flashcards modal -->
+  <div id="flashcards-modal" class="quiz-modal hidden">
+    <div class="quiz-dialog flashcards-dialog">
+      <header class="quiz-header">
+        <h3 id="flashcards-title"><i class="fas fa-layer-group"></i> Flashcards</h3>
+        <div class="quiz-header-actions">
+          <select id="flashcards-num-cards" class="quiz-select" title="Number of flashcards">
+            <option value="8">8 cards</option>
+            <option value="12" selected>12 cards</option>
+            <option value="20">20 cards</option>
+          </select>
+          <button id="btn-flashcards-regenerate" class="btn-icon" title="Regenerate flashcards">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+          <button id="btn-flashcards-download" class="btn-icon" title="Download flashcards (login required)">
+            <i class="fas fa-download"></i>
+          </button>
+          <button id="btn-flashcards-download-json" class="btn-icon" title="Download flashcards as JSON (login required)">
+            <i class="fas fa-file-code"></i>
+          </button>
+          <button id="btn-flashcards-close" class="btn-icon" title="Close flashcards">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </header>
+      <div class="quiz-body">
+        <div id="flashcards-empty" class="quiz-loading">Generating flashcards...</div>
+        <div id="flashcard-stage" class="flashcard-stage hidden">
+          <div id="flashcard-counter" class="flashcard-counter"></div>
+          <div id="flashcard" class="flashcard" title="Click to flip card">
+            <div class="flashcard-inner">
+              <div class="flashcard-face flashcard-front">
+                <h4>Front</h4>
+                <p id="flashcard-front-text"></p>
+              </div>
+              <div class="flashcard-face flashcard-back">
+                <h4>Back</h4>
+                <p id="flashcard-back-text"></p>
+                <small id="flashcard-hint" class="flashcard-hint"></small>
+              </div>
+            </div>
+          </div>
+          <div class="flashcard-nav">
+            <button id="btn-flashcards-prev" class="toolbar-btn"><i class="fas fa-arrow-left"></i> Previous</button>
+            <button id="btn-flashcards-next" class="toolbar-btn">Next <i class="fas fa-arrow-right"></i></button>
+          </div>
+          <p class="flashcard-tip">Click the card to flip between front and back.</p>
+        </div>
+      </div>
     </div>
   </div>
 

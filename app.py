@@ -1,9 +1,11 @@
 import os
 import json
 import uuid
+import csv
+import io
 from datetime import datetime
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session, send_file
 from werkzeug.utils import secure_filename
 from openai import AzureOpenAI
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
@@ -11,10 +13,13 @@ from azure.identity import DefaultAzureCredential
 from PyPDF2 import PdfReader
 from docx import Document
 from dotenv import load_dotenv
+import msal
+from functools import wraps
 
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 app.config["MAX_CONTENT_LENGTH"] = 250 * 1024 * 1024  # 250 MB
 app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads")
 ALLOWED_EXTENSIONS = {"pdf", "docx", "doc", "txt"}
@@ -74,6 +79,88 @@ else:
     cosmos_client = CosmosClient(_cosmos_endpoint, credential=credential)
     database = cosmos_client.get_database_client("learner_assistant")
     container = database.get_container_client("documents")
+
+# ---------------------------------------------------------------------------
+# Azure AD (MSAL) Configuration — for enterprise authentication
+# Falls back to simple session auth if not configured (dev mode)
+# ---------------------------------------------------------------------------
+_tenant_id = os.getenv("AZURE_TENANT_ID", "").strip()
+_client_id = os.getenv("AZURE_CLIENT_ID", "").strip()
+_app_id_uri = os.getenv("AZURE_APP_ID_URI", "").strip()
+_skip_auth = os.getenv("SKIP_AUTH", "false").lower() == "true"
+
+MSAL_ENABLED = bool(_tenant_id and _client_id and _app_id_uri)
+
+
+def get_current_user_from_token() -> dict | None:
+    """Extract user info from Authorization header (Bearer token from MSAL)."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    
+    token = auth_header[7:]  # Remove "Bearer " prefix
+    
+    # In production, validate the token using MSAL or MS Graph.
+    # For now, decode the JWT claims (this is insecure without validation).
+    # A proper implementation would call MSAL's token validation or use MS Graph.
+    try:
+        import base64
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        
+        # Decode payload (second part) - padded if necessary
+        payload = parts[1]
+        padding = 4 - len(payload) % 4
+        if padding != 4:
+            payload += "=" * padding
+        
+        decoded = json.loads(base64.urlsafe_b64decode(payload))
+        
+        # Extract standard claims
+        user_id = decoded.get("oid") or decoded.get("sub")
+        email = decoded.get("preferred_username") or decoded.get("email") or decoded.get("upn")
+        name = decoded.get("name") or email.split("@")[0]
+        
+        if not user_id or not email:
+            return None
+        
+        return {
+            "id": user_id,
+            "email": email,
+            "name": name,
+        }
+    except Exception:
+        return None
+
+
+def get_current_user() -> dict | None:
+    """Get current user from session (dev mode) or MSAL token (prod mode)."""
+    if MSAL_ENABLED:
+        user = get_current_user_from_token()
+        if user:
+            return user
+    
+    # Fallback to session-based auth (dev mode)
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    return {
+        "id": user_id,
+        "email": session.get("user_email", ""),
+        "name": session.get("user_name", ""),
+    }
+
+
+def require_login(f):
+    """Decorator to require login for routes."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            return jsonify({"error": "Unauthorized. Please log in."}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -287,6 +374,58 @@ def generate_quiz(text: str, filename: str, num_questions: int = 5,
     return quiz
 
 
+def generate_flashcards(text: str, filename: str, num_cards: int = 12,
+                        model: str = "gpt") -> dict:
+    """Generate study flashcards from document text."""
+    num_cards = max(5, min(int(num_cards or 12), 40))
+    chunks = chunk_text(text)
+    combined = "\n\n".join(chunks[:5])[:60_000]
+
+    prompt = (
+        f"Create EXACTLY {num_cards} study flashcards from the document below.\n\n"
+        "Rules:\n"
+        "1. Keep front side concise (a concept, term, or question).\n"
+        "2. Back side should be accurate and practical for learners.\n"
+        "3. Cover diverse topics from the document; avoid duplicates.\n"
+        "4. Keep each card focused on one idea.\n"
+        "5. Include an optional hint when useful.\n\n"
+        "Return ONLY valid JSON with this exact schema:\n"
+        "{\n"
+        '  "title": "Flashcards: <document topic>",\n'
+        '  "cards": [\n'
+        "    {\n"
+        '      "front": "<front side text>",\n'
+        '      "back": "<back side text>",\n'
+        '      "hint": "<optional hint or empty string>"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        f"Document filename: {filename}\n\n"
+        f"Document content:\n{combined}"
+    )
+
+    system_prompt = (
+        "You are an expert educator who creates high-quality study flashcards. "
+        "Always return valid JSON only — no markdown, no commentary."
+    )
+
+    raw = _call_llm(system_prompt, prompt, model=model,
+                    max_tokens=4096, json_mode=True)
+    deck = json.loads(raw)
+
+    cards = deck.get("cards", [])
+    if not isinstance(cards, list) or not cards:
+        raise ValueError("Flashcard generation returned no cards.")
+    for c in cards:
+        if not isinstance(c.get("front"), str) or not c.get("front").strip():
+            raise ValueError("Flashcard is missing front text.")
+        if not isinstance(c.get("back"), str) or not c.get("back").strip():
+            raise ValueError("Flashcard is missing back text.")
+        if "hint" not in c or c.get("hint") is None:
+            c["hint"] = ""
+    return deck
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -294,6 +433,53 @@ def generate_quiz(text: str, filename: str, num_questions: int = 5,
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/auth/me", methods=["GET"])
+def auth_me():
+    user = get_current_user()
+    return jsonify({
+        "loggedIn": bool(user),
+        "user": user,
+        "msalEnabled": MSAL_ENABLED,
+        "clientId": _client_id,
+        "tenantId": _tenant_id,
+        "appIdUri": _app_id_uri,
+    })
+
+
+@app.route("/auth/login", methods=["POST"])
+def auth_login():
+    """Handle both MSAL tokens and dev-mode email login."""
+    data = request.get_json(silent=True) or {}
+    
+    # Try MSAL token validation first (if configured)
+    user = get_current_user_from_token()
+    if user:
+        return jsonify({"message": "Logged in via token", "user": user})
+    
+    # Fallback to dev-mode email login (no Azure AD required)
+    if not _skip_auth and MSAL_ENABLED:
+        return jsonify({"error": "No valid token provided. Please use Azure AD to log in."}), 401
+    
+    # Dev-mode email login
+    email = (data.get("email") or "").strip().lower()
+    name = (data.get("name") or "").strip()
+
+    if not email or "@" not in email:
+        return jsonify({"error": "Please provide a valid email address."}), 400
+
+    session["user_id"] = email
+    session["user_email"] = email
+    session["user_name"] = name or email.split("@")[0]
+
+    return jsonify({"message": "Logged in", "user": get_current_user()})
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return jsonify({"message": "Logged out"})
 
 
 @app.route("/upload", methods=["POST"])
@@ -321,8 +507,10 @@ def upload_file():
         mindmap = generate_mindmap(text, filename, model=selected_model)
 
         doc_id = str(uuid.uuid4())
+        user = get_current_user()
         document = {
             "id": doc_id,
+            "ownerId": user["id"] if user else None,
             "filename": filename,
             "uploadDate": datetime.utcnow().isoformat(),
             "textContent": text[:100_000],
@@ -443,6 +631,107 @@ def quiz():
         return jsonify({"error": "Document not found"}), 404
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/flashcards", methods=["POST"])
+def flashcards():
+    """Generate flashcards for a stored document."""
+    data = request.get_json(silent=True) or {}
+    doc_id = data.get("documentId")
+    num_cards = data.get("numCards", 12)
+    selected_model = data.get("model", DEFAULT_MODEL)
+
+    if not doc_id:
+        return jsonify({"error": "Missing documentId"}), 400
+
+    try:
+        item = container.read_item(item=doc_id, partition_key=doc_id)
+        text = item.get("textContent", "")
+        if not text.strip():
+            return jsonify({"error": "Document has no text content."}), 400
+
+        flashcards_data = generate_flashcards(
+            text,
+            item.get("filename", "document"),
+            num_cards=num_cards,
+            model=selected_model,
+        )
+
+        item["flashcards"] = {
+            "title": flashcards_data.get("title", "Flashcards"),
+            "cards": flashcards_data.get("cards", []),
+            "updatedAt": datetime.utcnow().isoformat(),
+            "model": selected_model,
+        }
+        container.upsert_item(item)
+
+        return jsonify(flashcards_data)
+    except exceptions.CosmosResourceNotFoundError:
+        return jsonify({"error": "Document not found"}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/flashcards/<doc_id>/download", methods=["GET"])
+@require_login
+def download_flashcards(doc_id):
+    """Download flashcards as CSV or JSON (login required)."""
+    user = get_current_user()
+    fmt = (request.args.get("format") or "csv").strip().lower()
+
+    if fmt not in ("csv", "json"):
+        return jsonify({"error": "Invalid format. Use 'csv' or 'json'."}), 400
+
+    try:
+        item = container.read_item(item=doc_id, partition_key=doc_id)
+    except exceptions.CosmosResourceNotFoundError:
+        return jsonify({"error": "Document not found"}), 404
+
+    owner_id = item.get("ownerId")
+    if owner_id and owner_id != user["id"]:
+        return jsonify({"error": "You can only download your own flashcards."}), 403
+
+    deck = item.get("flashcards") or {}
+    cards = deck.get("cards") or []
+    if not cards:
+        return jsonify({"error": "No flashcards found. Generate them first."}), 404
+
+    safe_base = secure_filename(item.get("filename", "flashcards")) or "flashcards"
+
+    if fmt == "json":
+        payload = {
+            "title": deck.get("title", f"Flashcards: {safe_base}"),
+            "documentId": doc_id,
+            "generatedBy": user["email"],
+            "cards": cards,
+        }
+        data = io.BytesIO(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+        data.seek(0)
+        return send_file(
+            data,
+            mimetype="application/json",
+            as_attachment=True,
+            download_name=f"{safe_base}-flashcards.json",
+        )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["front", "back", "hint"])
+    for card in cards:
+        writer.writerow([
+            card.get("front", ""),
+            card.get("back", ""),
+            card.get("hint", ""),
+        ])
+
+    data = io.BytesIO(output.getvalue().encode("utf-8-sig"))
+    data.seek(0)
+    return send_file(
+        data,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"{safe_base}-flashcards.csv",
+    )
 
 
 # ---------------------------------------------------------------------------

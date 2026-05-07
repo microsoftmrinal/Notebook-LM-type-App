@@ -33,11 +33,13 @@ An intelligent learning assistant built on Azure that transforms documents (PDF,
 - **Interactive Visualization** — D3.js tree with zoom, pan, expand/collapse, and color-coded branches
 - **Click-to-Explore** — Click any node to see its summary; click "Explore More with AI" for a deep-dive explanation
 - **Quiz Me** — Generate AI-powered multiple-choice quizzes (3 / 5 / 10 questions) from any uploaded document, with instant scoring and per-question explanations
+- **Flashcards** — Generate AI-powered flashcards from any uploaded document and download them as CSV/JSON
 - **Multi-Document Support** — Upload multiple documents; switch between them via the sidebar
 - **Download PNG** — Export the mind map as a high-resolution PNG image
 - **Persistent Storage** — All documents and mind maps are stored in Azure Cosmos DB
 - **Dual Model Support** — Switch between GPT-4.1 (general-purpose) and o4-mini (advanced reasoning) via UI selector
 - **Azure AD Authentication** — Zero API keys at runtime; uses `DefaultAzureCredential` for both OpenAI and Cosmos DB
+- **User Login for Downloads** — Users must be logged in to download generated flashcards
 
 ---
 
@@ -356,6 +358,8 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python app.py
+# If your folder path contains spaces, use this one-liner instead:
+& "c:/NOTEBOOKLM - AZURE Project/.venv/Scripts/python.exe" "c:/NOTEBOOKLM - AZURE Project/app.py"
 ```
 
 Open <http://127.0.0.1:5000>. Done.
@@ -562,6 +566,10 @@ cp .env.example .env
 ```bash
 python app.py
 ```
+```powershell
+# Windows PowerShell one-liner (safe when the folder path has spaces)
+& "c:/NOTEBOOKLM - AZURE Project/.venv/Scripts/python.exe" "c:/NOTEBOOKLM - AZURE Project/app.py"
+```
 Open **http://127.0.0.1:5000** in your browser.
 
 ### 4. Use
@@ -570,6 +578,7 @@ Open **http://127.0.0.1:5000** in your browser.
 3. Click nodes to expand/collapse and view summaries
 4. Click **"Explore More with AI"** for detailed explanations
 5. Click **"Download PNG"** to export the mind map
+6. Click **"Flashcards"** to generate study cards and download them (login required)
 
 ---
 
